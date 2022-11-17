@@ -178,8 +178,6 @@ int cd(char *dir)
         return 1;
     }
 
-    printf("Directorio actual: %s\n", getcwd(NULL, 0));
-
     return 0;
 }
 
