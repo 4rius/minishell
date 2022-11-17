@@ -81,7 +81,7 @@ void manejador_sigint() {
     // Solo cortar un proceso hijo si hay alguno en ejecucion
     if (pidfg != 0) {
         kill(pidfg, SIGINT);
-    }
+    } 
     printf("\n");
     // Si no hay ningun proceso hijo en ejecucion, no hacer nada, solo volver a la linea de comandos
     return;
