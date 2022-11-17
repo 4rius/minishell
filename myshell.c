@@ -174,8 +174,6 @@ int procesar(tline *linea)
         jobs();
     } else if (strcmp(linea->commands[0].argv[0], "fg") == 0) {
         fg(atoi(linea->commands[0].argv[1]));
-    } else if (strcmp(linea->commands[0].argv[0], "bg") == 0) {
-        bg(atoi(linea->commands[0].argv[1]));
     } else if (strcmp(linea->commands[0].argv[0], "umask") == 0) {
         chumask(atoi(linea->commands[0].argv[1]));
     } else if (strcmp(linea->commands[0].argv[0], "exit") == 0) {
@@ -227,26 +225,6 @@ int fg(int pid)
                 // Poner el proceso en primer plano
                 kill(pids[i], SIGCONT);  // SIGCONT para reanudar el proceso
                 waitpid(pids[i], NULL, 0);  // Esperar a que el proceso termine
-                return 0;
-            }
-        }
-    }
-
-    printf("No se ha encontrado el proceso %d\n", pid);
-    return 1;
-}
-
-// Implementación bg
-int bg(int pid)
-{
-    int i;
-    for (i = 0; i < num_procesos; i++) {
-        // Comprobar si el proceso está activo
-        if (kill(pids[i], 0) == 0) {
-            // Comprobar si el proceso es el que se quiere poner en segundo plano
-            if (pids[i] == pid) {
-                // Poner el proceso en segundo plano
-                kill(pids[i], SIGCONT);
                 return 0;
             }
         }
