@@ -101,6 +101,7 @@ void loop() {
             comprobar_procesos_terminados();
             procesar(line);
         }
+    }
 }
 
 tline *leer_linea() {
@@ -122,13 +123,14 @@ tline *leer_linea() {
 void comprobar_procesos_terminados() {
     int i;
     int status;
-    int pid;
     for (i = 0; i < num_procesos; i++) {
-        pid = waitpid(pids[i], &status, WNOHANG); // Comprobar si hay procesos zombies
-        if (pid > 0) {
-            // Eliminar el proceso de la lista
+        if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado
+            // Eliminar el proceso de la lista de procesos hijos
             pids[i] = pids[num_procesos - 1];
             nombre_procesos[i] = nombre_procesos[num_procesos - 1];
+            // Cambiar el tamaño de los arrays
+            pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
+            nombre_procesos = (char **)realloc(nombre_procesos, sizeof(char *) * (num_procesos - 1));
             num_procesos--;
         }
     }
@@ -219,7 +221,7 @@ int fg(int pid)
     int i;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (kill(pids[i], 0) == 0) {
+        if (kill(pids[i], 0) == 0) {  // kill devuelve 0 si el proceso está activo, kill con un 0 no mata el proceso, solo comprueba si está activo
             // Comprobar si el proceso es el que se quiere poner en primer plano
             if (pids[i] == pid) {
                 // Poner el proceso en primer plano
