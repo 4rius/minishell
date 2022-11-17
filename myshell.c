@@ -39,6 +39,7 @@ void loop();
 tline *leer_linea();
 int procesar(tline *linea);
 int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background);
+void comprobar_procesos_terminados();
 
 
 
@@ -91,13 +92,15 @@ void loop() {
     tline *line;
  
     while (1) {
+        // Comprobar si hay algun proceso hijo terminado
         printf("\033[0;32m %s - \033[0;31mmsh>\x1b[0m ", getcwd(NULL, 0));  // Prompt y directorio actual
         line = leer_linea();
         if (line == NULL) {
             continue;
-        } else procesar(line);
-
-    }
+        } else {
+            comprobar_procesos_terminados();
+            procesar(line);
+        }
 }
 
 tline *leer_linea() {
@@ -113,6 +116,22 @@ tline *leer_linea() {
     line = tokenize(buffer);
     // Devolver línea tokenizada
     return line;
+}
+
+// Comprobar si hay algun proceso hijo terminado
+void comprobar_procesos_terminados() {
+    int i;
+    int status;
+    int pid;
+    for (i = 0; i < num_procesos; i++) {
+        pid = waitpid(pids[i], &status, WNOHANG); // Comprobar si hay procesos zombies
+        if (pid > 0) {
+            // Eliminar el proceso de la lista
+            pids[i] = pids[num_procesos - 1];
+            nombre_procesos[i] = nombre_procesos[num_procesos - 1];
+            num_procesos--;
+        }
+    }
 }
 
 int procesar(tline *linea)
