@@ -125,10 +125,10 @@ void comprobar_procesos_terminados() {
     int status;
     for (i = 0; i < num_procesos; i++) {
         if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado
-            // Eliminar el proceso de la lista de procesos hijos
-            pids[i] = pids[num_procesos - 1];
+            // Eliminar el proceso de la lista de procesos hijos y redimensionar el array
+            printf("\n[%d] %s terminado\n", pids[i], nombre_procesos[i]);
+            pids[i] = pids[num_procesos - 1];  // Copiar el ultimo elemento en el hueco del proceso terminado, para no dejar huecos en el array y poder usar realloc
             nombre_procesos[i] = nombre_procesos[num_procesos - 1];
-            // Cambiar el tamaño de los arrays
             pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
             nombre_procesos = (char **)realloc(nombre_procesos, sizeof(char *) * (num_procesos - 1));
             num_procesos--;
