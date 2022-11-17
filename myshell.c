@@ -105,7 +105,8 @@ tline *leer_linea() {
     tline *line;
     // Leer línea de entrada estándar
     fgets(buffer, 1024, stdin);
-    if (strlen(buffer) == 0) {
+    // Hacer que no se rompa si se introduce una cadena vacía
+    if (buffer[0] == '\n') {
         return NULL;
     }
     // Tokenizar línea
