@@ -129,8 +129,6 @@ void comprobar_procesos_terminados() {
     int status;
     for (i = 0; i < num_procesos; i++) {
         if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado
-            // Eliminar el proceso de la lista de procesos hijos y redimensionar el array
-            printf("\n[%d] %s terminado\n", pids[i], nombre_procesos[i]);
             pids[i] = pids[num_procesos - 1];  // Copiar el ultimo elemento en el hueco del proceso terminado, para no dejar huecos en el array y poder usar realloc
             nombre_procesos[i] = nombre_procesos[num_procesos - 1];
             pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
@@ -208,7 +206,7 @@ void jobs()
     int status;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (waitpid(pids[i], &status, WNOHANG) != 0) {
+        if (waitpid(pids[i], &status, WNOHANG) == 0) {  // WNOHANG testea si el hijo pid[i] ha terminado, si no ha terminado, devuelve 0
             printf("[%d]+ Running        %s\n", pids[i], nombre_procesos[i]);
         }
     }
@@ -221,7 +219,7 @@ int fg(int pid)
     int status;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (waitpid(pids[i], &status, WNOHANG) != 0) {  // kill devuelve 0 si el proceso está activo, kill con un 0 no mata el proceso, solo comprueba si está activo
+        if (waitpid(pids[i], &status, WNOHANG) == 0) {
             // Comprobar si el proceso es el que se quiere poner en primer plano
             if (pids[i] == pid) {
                 // Poner el proceso en primer plano
@@ -244,6 +242,9 @@ int chumask(int mask)
         printf("La máscara debe estar entre 0 y 777\n");
         return 1;
     }
+
+    // Invertir la máscara para que sea la que se le pasa a umask
+    mask = 0777 - mask;
 
     umask_value = mask;
     return 0;
@@ -286,12 +287,15 @@ void help()
 int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background)
 {
     int i = 0;
+    int j = 0;
     int pid;
     int fd[2];
     int in = 0;
     int out = 0;
     int err = 0;
     int status = 0;
+    char *lineaenviada;
+    lineaenviada = (char *)malloc(1024 * sizeof(char));
 
     // Comprobar si necesitamos un pipe
     if (mandatos > 1) {
@@ -331,20 +335,13 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
                 dup2(fd[1], 1);  // Redireccionar la salida estándar al extremo de escritura del pipe
             } else if (redireccion == 1) {
                 // Si hay que redireccionar la entrada estándar
-                dup2(in, 0);
+                dup2(in, STDIN_FILENO);
             } else if (redireccion == 2) {
                 // Si hay que redireccionar la salida
-                dup2(out, 1);
+                dup2(out, STDOUT_FILENO);
             } else if (redireccion == 3) {
                 // Si hay que redireccionar la salida de error
-                dup2(err, 2);
-            } else {
-                // Cerrar los descriptores de fichero que no se usan y el pipe
-                close(fd[0]);
-                close(fd[1]);
-                close(in);
-                close(out);
-                close(err);
+                dup2(err, STDERR_FILENO);
             }
 
             // Ejecutar el comando
@@ -372,12 +369,18 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             exit(1);
         } else { // Proceso padre
             // Añadir el proceso a la lista de procesos
-            pids = realloc(pids, (num_procesos + 1) * sizeof(int));
-            pids[num_procesos] = pid;
-            nombre_procesos = realloc(nombre_procesos, (num_procesos + 1) * sizeof(char *));
-            nombre_procesos[num_procesos] = (char*)malloc((strlen(linea->commands[i].argv[0]) + 1) * sizeof(char));
-            strcpy(nombre_procesos[num_procesos], linea->commands[i].argv[0]);
+            pids = realloc(pids, (num_procesos + 1) * sizeof(int));  // Añadir espacio para el nuevo proceso
+            pids[num_procesos] = pid;  // Guardar el pid del proceso
+            nombre_procesos = realloc(nombre_procesos, (num_procesos + 1) * sizeof(char *));  // Añadir espacio para el nuevo proceso
+            for (j = 0; j < linea->commands[i].argc; j++) {  // Guardar el nombre completo del proceso
+                strcat(lineaenviada, linea->commands[i].argv[j]);
+                strcat(lineaenviada, " ");
+            }
+            nombre_procesos[num_procesos] = (char*)malloc((strlen(lineaenviada) + 1) * sizeof(char));  // Añadir espacio para el nombre del proceso
+            strcpy(nombre_procesos[num_procesos], lineaenviada);
             num_procesos++;
+            free(lineaenviada);
+            printf("Proceso %d ejecutándose en background.\n", pid);
         }
     }
     // Ejecución en foreground
@@ -391,11 +394,11 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
                 close(fd[0]);
                 dup2(fd[1], 1);
             } else if (redireccion == 1) {
-                dup2(in, 0);
+                dup2(in, STDIN_FILENO);
             } else if (redireccion == 2) {
-                dup2(out, 1);
+                dup2(out, STDOUT_FILENO);
             } else if (redireccion == 3) {
-                dup2(err, 2);
+                dup2(err, STDERR_FILENO);
             }
 
             // Ejecutar el comando
@@ -429,7 +432,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             // Comprobar si el proceso hijo ha terminado correctamente
             if (WIFEXITED(status) != 0) {
                 if (WEXITSTATUS(status) != 0) {
-                    printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].filename, strerror(errno));
+                    printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].argv[0], strerror(errno));
                     return 1;
                     }
                 }
