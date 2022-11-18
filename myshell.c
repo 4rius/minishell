@@ -18,7 +18,6 @@ char *home;
 int *pids;  // Pids de los procesos hijos (background)
 char **nombre_procesos; // Nombres de los procesos hijos (background)
 int num_procesos = 0; // Numero de procesos hijos (background)
-int pidfg = 0; // Pid del proceso foreground
 int umask_value;
 
 // Mandatos internos
@@ -31,7 +30,7 @@ void help();
 void clear();
 void salir();
 
-// Manejadores de señales
+// Manejador de señales
 void manejador_sigint();
 
 // Funciones
@@ -60,7 +59,7 @@ int main() {
 }
 
 int inicializar() {
-    printf("\x1b[35m---------------- Minishell - Santiago Arias --------------\n");
+    printf("\x1b[35m------- Minishell - Santiago Arias ------\n");
 
     // Inicializar variables de entorno
     path = getenv("PATH");
@@ -80,12 +79,8 @@ int inicializar() {
 }
 
 void manejador_sigint() {
-    // Solo cortar un proceso hijo si hay alguno en ejecucion
-    if (pidfg != 0) {
-        kill(pidfg, SIGINT);
-    } 
+    // Ignorar SIGINT
     printf("\n");
-    // Si no hay ningun proceso hijo en ejecucion, no hacer nada, solo volver a la linea de comandos
     return;
 }
 
@@ -96,7 +91,7 @@ void loop() {
     while (1) {
         // Comprobar si hay algun proceso hijo terminado
         buf = (char *)malloc(1024 * sizeof(char));
-        printf("\033[0;32m %s - \033[0;31mmsh>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
+        printf("\033[0;32m %s\x1b[0m:\033[0;31mmsh>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
         free(buf);
         line = leer_linea();
         if (line == NULL) {
@@ -128,7 +123,7 @@ void comprobar_procesos_terminados() {
     int i;
     int status;
     for (i = 0; i < num_procesos; i++) {
-        if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado
+        if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado, si hubiera terminado, status nos diría cómo
             pids[i] = pids[num_procesos - 1];  // Copiar el ultimo elemento en el hueco del proceso terminado, para no dejar huecos en el array y poder usar realloc
             nombre_procesos[i] = nombre_procesos[num_procesos - 1];
             pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
@@ -149,7 +144,7 @@ int procesar(tline *linea)
         background = 1;
     } else background = 0;
 
-    // Comprobar si hay que redireccionar la entrada y ek tipo de redireccion
+    // Comprobar si hay algo que redireccionar
     if (linea->redirect_input != NULL) {
         redireccion = 1;
     } else if (linea->redirect_output != NULL) {
@@ -161,7 +156,7 @@ int procesar(tline *linea)
     // Comprobar si hay que ejecutar más de un mandato (pipe)
     if (linea->ncommands > 1) {
         mandatos = linea->ncommands;
-    } else mandatos = 0;
+    } else mandatos = 1;
 
     // Comprobar si el mandato es interno
     if (strcmp(linea->commands[0].argv[0], "cd") == 0) {
@@ -223,8 +218,8 @@ int fg(int pid)
             // Comprobar si el proceso es el que se quiere poner en primer plano
             if (pids[i] == pid) {
                 // Poner el proceso en primer plano
-                kill(pids[i], SIGCONT);  // SIGCONT para reanudar el proceso
-                waitpid(pids[i], NULL, 0);  // Esperar a que el proceso termine
+                printf("%s\n", nombre_procesos[i]);
+                waitpid(pids[i], &status, 0);  // Esperar a que el proceso termine, no nos hace falta ninguna flag como antes porque vamos a estar aquí hasta que termine
                 return 0;
             }
         }
@@ -243,7 +238,7 @@ int chumask(int mask)
         return 1;
     }
 
-    // Invertir la máscara para que sea la que se le pasa a umask
+    // Invertir la máscara para que represente los permisos con los que creamos los archivos
     mask = 0777 - mask;
 
     umask_value = mask;
@@ -261,7 +256,7 @@ void salir()
 {
     printf("------------Matando la minishell--------------\n");
     printf("------------Hasta la próxima------------------\n");
-    // Liberar memoria y terminar procesos en segundo plano
+    // Liberar memoria
     free(pids);
     free(nombre_procesos);
     // Salir
@@ -271,7 +266,8 @@ void salir()
 // Implementación help
 void help()
 {
-    printf("-----------------Ayuda-----------------\n");
+    printf("\x1b[35m------- Minishell - Santiago Arias ------\n");
+    printf("\x1b[35m----------------- Ayuda -----------------\x1b[0m\n");
     printf("Comandos internos:\n");
     printf("cd [dir] - Cambia el directorio actual a dir. Sin especificar dir, se cambia al directorio HOME.\n");
     printf("jobs - Muestra los procesos en segundo plano.\n");
@@ -281,6 +277,7 @@ void help()
     printf("exit - Cierra la minishell.\n");
     printf("clear - Limpia la pantalla.\n");
     printf("help - Muestra esta ayuda.\n");
+    printf("El resto de comandos se ejecutan como en cualquier shell de Linux.\n");
 }
 
 // Ejecutar mandatos externos
@@ -289,7 +286,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     int i = 0;
     int j = 0;
     int pid;
-    int fd[2];
+    int tub[2];
     int in = 0;
     int out = 0;
     int err = 0;
@@ -299,7 +296,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 
     // Comprobar si necesitamos un pipe
     if (mandatos > 1) {
-        pipe(fd);
+        pipe(tub);
     }
 
     // Comprobar si hay que redireccionar la entrada o la salida
@@ -316,7 +313,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     } else if (redireccion == 3) {
         err = creat(linea->redirect_error, umask_value);
         if (err == -1) {
-            printf("%s: Error. No se pudo crear el archivo de error, %s", linea->redirect_error, strerror(errno));
+            printf("%s: Error. No se pudo crear el archivo de salida de error, %s", linea->redirect_error, strerror(errno));
         }
     }
 
@@ -331,8 +328,8 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             // Ejecutar el comando
             if (mandatos > 1) {
                 // Si hay más de un comando, redireccionar la salida del primer comando al pipe
-                close(fd[0]);  // Cerrar el extremo de lectura del pipe
-                dup2(fd[1], 1);  // Redireccionar la salida estándar al extremo de escritura del pipe
+                close(tub[0]);  // Cerrar el extremo de lectura del pipe
+                dup2(tub[1], STDOUT_FILENO);  // Redireccionar la salida estándar al extremo de escritura del pipe
             } else if (redireccion == 1) {
                 // Si hay que redireccionar la entrada estándar
                 dup2(in, STDIN_FILENO);
@@ -345,27 +342,9 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             }
 
             // Ejecutar el comando
-            execvp(linea->commands[i].filename, linea->commands[i].argv);
+            execv(linea->commands[i].filename, linea->commands[i].argv);
 
-            //Si había pipe, ejecutar el resto de comandos
-            while (mandatos > 1) {
-                i++;
-                // Cerrar el extremo de escritura del pipe
-                close(fd[1]);
-                // Redireccionar la entrada estándar al extremo de lectura del pipe
-                dup2(fd[0], 0);
-                // Si no es el último comando, crear otro pipe
-                if (i < mandatos) {
-                    pipe(fd);
-                    // Redireccionar la salida estándar al extremo de escritura del pipe
-                    dup2(fd[1], 1);
-                }
-                // Ejecutar el comando
-                execvp(linea->commands[i].filename, linea->commands[i].argv);
-                mandatos--;  // Decrementar el número de mandatos
-            }
-
-            printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].filename, strerror(errno));
+            printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].argv[0], strerror(errno));
             exit(1);
         } else { // Proceso padre
             // Añadir el proceso a la lista de procesos
@@ -379,8 +358,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             nombre_procesos[num_procesos] = (char*)malloc((strlen(lineaenviada) + 1) * sizeof(char));  // Añadir espacio para el nombre del proceso
             strcpy(nombre_procesos[num_procesos], lineaenviada);
             num_procesos++;
-            free(lineaenviada);
-            printf("Proceso %d ejecutándose en background.\n", pid);
+            printf(" %s ejecutándose en segundo plano.\n", lineaenviada);
         }
     }
     // Ejecución en foreground
@@ -391,8 +369,8 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             return 1;
         } else if (pid == 0) {
             if (mandatos > 1) {
-                close(fd[0]);
-                dup2(fd[1], 1);
+                close(tub[0]); // Cerrar el extremo de lectura del pipe
+                dup2(tub[1], STDOUT_FILENO);
             } else if (redireccion == 1) {
                 dup2(in, STDIN_FILENO);
             } else if (redireccion == 2) {
@@ -402,42 +380,30 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             }
 
             // Ejecutar el comando
-            execvp(linea->commands[i].filename, linea->commands[i].argv);
+            execv(linea->commands[i].filename, linea->commands[i].argv);
+            
+            if (strcmp(strerror(errno), "Bad address \0"))
+                printf("%s: No se encuentra el mandatao.\n", linea->commands[i].argv[0]);
+                 else printf("%s: Error al ejecutar el mandato.\n", linea->commands[i].argv[0]);
 
-            //Si había pipe, ejecutar el resto de comandos
-            while (mandatos > 1) {
-                i++;
-                close(fd[1]);
-                dup2(fd[0], 0);
-                if (i < mandatos) {
-                    pipe(fd);
-                    dup2(fd[1], 1);
-                }
-                execvp(linea->commands[i].filename, linea->commands[i].argv);
-                mandatos--;
-            }
-
-            printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].filename, strerror(errno));
             exit(1);
         } else {
-            // Activar el proceso en foreground activo
-            pidfg = pid;
 
             // Esperar a que termine el proceso hijo
             wait(&status);
 
-            // Desactivar el proceso en foreground activo
-            pidfg = 0;
-
             // Comprobar si el proceso hijo ha terminado correctamente
             if (WIFEXITED(status) != 0) {
                 if (WEXITSTATUS(status) != 0) {
-                    printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].argv[0], strerror(errno));
+                    printf("%s: Error al ejecutar el mandato.\n", linea->commands[i].argv[0]);
                     return 1;
                     }
                 }
             }
     }
+
+    // Liberar la línea reservada
+    free(lineaenviada);
 
     return 0;
 }
