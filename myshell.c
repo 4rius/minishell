@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -90,10 +91,13 @@ void manejador_sigint() {
 
 void loop() {
     tline *line;
+    char *buf;  // Buffer para colocar el directorio actual
  
     while (1) {
         // Comprobar si hay algun proceso hijo terminado
-        printf("\033[0;32m %s - \033[0;31mmsh>\x1b[0m ", getcwd(NULL, 0));  // Prompt y directorio actual
+        buf = (char *)malloc(1024 * sizeof(char));
+        printf("\033[0;32m %s - \033[0;31mmsh>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
+        free(buf);
         line = leer_linea();
         if (line == NULL) {
             continue;
@@ -147,18 +151,12 @@ int procesar(tline *linea)
         background = 1;
     } else background = 0;
 
-    // Comprobar si hay que redireccionar la entrada
+    // Comprobar si hay que redireccionar la entrada y ek tipo de redireccion
     if (linea->redirect_input != NULL) {
         redireccion = 1;
-    } else redireccion = 0;
-
-    // Comprobar si hay que redireccionar la salida
-    if (linea->redirect_output != NULL) {
+    } else if (linea->redirect_output != NULL) {
         redireccion = 2;
-    } else redireccion = 0;
-
-    // Comprobar si hay que redireccionar la salida de error
-    if (linea->redirect_error != NULL) {
+    } else if (linea->redirect_error != NULL) {
         redireccion = 3;
     } else redireccion = 0;
 
@@ -192,9 +190,11 @@ int procesar(tline *linea)
 int cd(char *dir)
 {
     if (dir == NULL) {
-        chdir(home);
+        if (chdir(home) == -1) {
+            perror("cd");
+        }
     } else if (chdir(dir) != 0) {
-        printf("No se ha podido cambiar al directorio %s\n", dir);
+        printf("cd: Error: no se ha podido cambiar al directorio %s\n", dir);
         return 1;
     }
 
@@ -205,9 +205,10 @@ int cd(char *dir)
 void jobs()
 {
     int i;
+    int status;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (kill(pids[i], 0) == 0) {  // kill devuelve 0 si el proceso está activo, kill con un 0 no mata el proceso, solo comprueba si está activo
+        if (waitpid(pids[i], &status, WNOHANG) != 0) {
             printf("[%d]+ Running        %s\n", pids[i], nombre_procesos[i]);
         }
     }
@@ -217,9 +218,10 @@ void jobs()
 int fg(int pid)
 {
     int i;
+    int status;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (kill(pids[i], 0) == 0) {  // kill devuelve 0 si el proceso está activo, kill con un 0 no mata el proceso, solo comprueba si está activo
+        if (waitpid(pids[i], &status, WNOHANG) != 0) {  // kill devuelve 0 si el proceso está activo, kill con un 0 no mata el proceso, solo comprueba si está activo
             // Comprobar si el proceso es el que se quiere poner en primer plano
             if (pids[i] == pid) {
                 // Poner el proceso en primer plano
@@ -394,12 +396,6 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
                 dup2(out, 1);
             } else if (redireccion == 3) {
                 dup2(err, 2);
-            } else {
-                close(fd[0]);
-                close(fd[1]);
-                close(in);
-                close(out);
-                close(err);
             }
 
             // Ejecutar el comando
