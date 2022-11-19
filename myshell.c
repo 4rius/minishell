@@ -23,10 +23,9 @@ int umask_value;
 // Mandatos internos
 int cd(char *dir);
 void jobs();
-int fg();
+int fg(char *pid);
 int chumask(int mask);
 void help();
-void clear();
 void salir();
 
 // Manejador de señales
@@ -34,6 +33,7 @@ void manejador_sigint();
 
 // Funciones
 int inicializar();
+void prompt();
 void loop();
 tline *leer_linea();
 int procesar(tline *linea);
@@ -58,8 +58,7 @@ int main() {
 }
 
 int inicializar() {
-    clear();
-    signal(SIGINT, SIG_IGN); // Ignorar CTRL + C
+    system("clear");
     printf("\x1b[35m------- Minishell - Santiago Arias ------\n");
 
     // Inicializar variables de entorno
@@ -76,19 +75,24 @@ int inicializar() {
     return 0;
 }
 
+void prompt() {
+    char *buf;  // Para leer el directorio actual
+
+    buf = (char *)malloc(1024 * sizeof(char));
+    printf("\033[0;32m %s\x1b[0m:\033[0;31mm$h>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
+    free(buf);
+}
+
 void loop() {
     tline *line;
-    char *buf;  // Buffer para colocar el directorio actual
- 
+    
     while (1) {
-        // Comprobar si hay algun proceso hijo terminado
-        buf = (char *)malloc(1024 * sizeof(char));
-        printf("\033[0;32m %s\x1b[0m:\033[0;31mm$h>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
-        free(buf);
+        prompt();
+        // Ignorar CTRL + C
+        signal(SIGINT, SIG_IGN);
         line = leer_linea();
-        if (line == NULL) {
-            continue;
-        } else {
+        if (line != NULL) {
+            // Comprobar si hay algun proceso hijo terminado, útil para jobs y fg
             comprobar_procesos_terminados();
             procesar(line);
         }
@@ -122,10 +126,17 @@ void comprobar_procesos_terminados() {
                 nombre_procesos[j] = nombre_procesos[j + 1];
             }
             num_procesos--;
-            pids = (int *)realloc(pids, num_procesos * sizeof(int));
-            nombre_procesos = (char **)realloc(nombre_procesos, num_procesos * sizeof(char *));
+            pids = (int *)realloc(pids, num_procesos + 1 * sizeof(int));
+            nombre_procesos = (char **)realloc(nombre_procesos, num_procesos + 1 * sizeof(char *));
         }
     }
+}
+
+// Manejador CTRL + C
+void manejador_sigint()
+{
+    // Salir solo del proceso en foreground, no de la minishell
+    printf("\n");
 }
 
 int procesar(tline *linea)
@@ -159,13 +170,13 @@ int procesar(tline *linea)
     } else if (strcmp(linea->commands[0].argv[0], "jobs") == 0) {
         jobs();
     } else if (strcmp(linea->commands[0].argv[0], "fg") == 0) {
-        fg(atoi(linea->commands[0].argv[1]));
+        fg(linea->commands[0].argv[1]);
     } else if (strcmp(linea->commands[0].argv[0], "umask") == 0) {
         chumask(atoi(linea->commands[0].argv[1]));
     } else if (strcmp(linea->commands[0].argv[0], "exit") == 0) {
         salir();
     } else if (strcmp(linea->commands[0].argv[0], "clear") == 0) {
-        clear();
+        system("clear");
     } else if(strcmp(linea->commands[0].argv[0], "help") == 0) {
         help();
     } else ejecutar_externo(linea, mandatos, redireccion, background); // Ejecutar mandato externo
@@ -203,26 +214,29 @@ void jobs()
 }
 
 // Implementación fg
-int fg()
+int fg(char *pid)
 {
-    comprobar_procesos_terminados(); // Actualizar la lista de procesos, por si alguno hubiera terminado
-    // Coger el último proceso que se añadió al array de procesos
-    int pid = pids[num_procesos - 1];
+    int i;
+    int pidv;
     int status;
-    // Compobar si el proceso está activo
-    if (waitpid(pid, &status, WNOHANG) == 0) {  // WNOHANG testea si el hijo pid[i] ha terminado, si no ha terminado, devuelve 0
-        // Esperar a que el proceso termine
-        waitpid(pid, &status, 0);
-        // Eliminar el proceso del array de procesos
-        pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
-        nombre_procesos = (char **)realloc(nombre_procesos, sizeof(char *) * (num_procesos - 1));
-        num_procesos--;
+    if (pid != NULL) {
+        pidv = atoi(pid);
+        for (i = 0; i < num_procesos; i++) { // Para sacar el nombre del proceso
+            if (pids[i] == pidv)
+                if (waitpid(pidv, &status, WNOHANG) == 0) {  // Comprobar si el proceso sigue activo
+                    printf("%s\n", nombre_procesos[i]);
+                    waitpid(pidv, &status, 0);
+                    return 0;
+                }
+        }
     } else {
-        printf("fg: Error: no se ha encontrado el proceso %d\n", pid);
-        return 1;
+        pidv = pids[num_procesos - 1];
+        printf("%s\n", nombre_procesos[num_procesos - 1]);
+        waitpid(pidv, &status, 0);
+        return 0;
     }
 
-    printf("No hay ningún proceso en segundo plano.\n");
+    printf("fg: No hay ningún proceso en segundo plano o no se ha podido ejecutar el pid proporcionado en primer plano.\n");
     return 1;
 }
 
@@ -240,13 +254,6 @@ int chumask(int mask)
 
     umask_value = mask;
     return 0;
-}
-
-// Implementación clear
-void clear()
-{
-    //printf("\033[H\033[J");  // Secuencia de escape ANSI para limpiar la pantalla
-    system("clear");
 }
 
 // Implementación exit
@@ -269,7 +276,7 @@ void help()
     printf("Comandos internos:\n");
     printf("cd [dir] - Cambia el directorio actual a dir. Sin especificar dir, se cambia al directorio HOME.\n");
     printf("jobs - Muestra los procesos en segundo plano.\n");
-    printf("fg [pid] - Pone el proceso con el pid indicado en primer plano.\n");
+    printf("fg [pid] - Pone el proceso con el pid indicado en primer plano, o el último proceso mandado a segundo plano si no se da un argumento.\n");
     printf("umask [mask] - Cambia la máscara de permisos de los archivos creados por la minishell.\n");
     printf("exit - Cierra la minishell.\n");
     printf("clear - Limpia la pantalla.\n");
@@ -360,6 +367,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     }
     // Ejecución en foreground
     else {
+        signal(SIGINT, manejador_sigint);
         pid = fork();
         if (pid < 0) {
             printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
