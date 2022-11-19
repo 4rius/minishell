@@ -23,8 +23,7 @@ int umask_value;
 // Mandatos internos
 int cd(char *dir);
 void jobs();
-int fg(int pid);
-int bg(int pid);
+int fg();
 int chumask(int mask);
 void help();
 void clear();
@@ -59,6 +58,8 @@ int main() {
 }
 
 int inicializar() {
+    clear();
+    signal(SIGINT, SIG_IGN); // Ignorar CTRL + C
     printf("\x1b[35m------- Minishell - Santiago Arias ------\n");
 
     // Inicializar variables de entorno
@@ -69,19 +70,10 @@ int inicializar() {
     pids = (int *)malloc(sizeof(int));
     nombre_procesos = (char **)malloc(sizeof(char *));
 
-    // Deshabilitar el comportamiento por defecto de SIGINT (CTRL+C)
-    signal(SIGINT, manejador_sigint);
-
     // Inicializar el umask de la minishell
     chumask(0000);
  
     return 0;
-}
-
-void manejador_sigint() {
-    // Ignorar SIGINT
-    printf("\n");
-    return;
 }
 
 void loop() {
@@ -91,7 +83,7 @@ void loop() {
     while (1) {
         // Comprobar si hay algun proceso hijo terminado
         buf = (char *)malloc(1024 * sizeof(char));
-        printf("\033[0;32m %s\x1b[0m:\033[0;31mmsh>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
+        printf("\033[0;32m %s\x1b[0m:\033[0;31mm$h>\x1b[0m ", getcwd(buf, 1024));  // Imprimir el prompt y el directorio actual
         free(buf);
         line = leer_linea();
         if (line == NULL) {
@@ -120,15 +112,18 @@ tline *leer_linea() {
 
 // Comprobar si hay algun proceso hijo terminado
 void comprobar_procesos_terminados() {
-    int i;
+    int i, j;
     int status;
     for (i = 0; i < num_procesos; i++) {
         if (waitpid(pids[i], &status, WNOHANG) != 0) { // WNOHANG testea si el hijo pid[i] ha terminado, si hubiera terminado, status nos diría cómo
-            pids[i] = pids[num_procesos - 1];  // Copiar el ultimo elemento en el hueco del proceso terminado, para no dejar huecos en el array y poder usar realloc
-            nombre_procesos[i] = nombre_procesos[num_procesos - 1];
-            pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
-            nombre_procesos = (char **)realloc(nombre_procesos, sizeof(char *) * (num_procesos - 1));
+            // Mantener el orden de los procesos por cómo se ha implementado fg
+            for (j = i; j < num_procesos; j++) {
+                pids[j] = pids[j + 1];
+                nombre_procesos[j] = nombre_procesos[j + 1];
+            }
             num_procesos--;
+            pids = (int *)realloc(pids, num_procesos * sizeof(int));
+            nombre_procesos = (char **)realloc(nombre_procesos, num_procesos * sizeof(char *));
         }
     }
 }
@@ -208,24 +203,26 @@ void jobs()
 }
 
 // Implementación fg
-int fg(int pid)
+int fg()
 {
-    int i;
+    comprobar_procesos_terminados(); // Actualizar la lista de procesos, por si alguno hubiera terminado
+    // Coger el último proceso que se añadió al array de procesos
+    int pid = pids[num_procesos - 1];
     int status;
-    for (i = 0; i < num_procesos; i++) {
-        // Comprobar si el proceso está activo
-        if (waitpid(pids[i], &status, WNOHANG) == 0) {
-            // Comprobar si el proceso es el que se quiere poner en primer plano
-            if (pids[i] == pid) {
-                // Poner el proceso en primer plano
-                printf("%s\n", nombre_procesos[i]);
-                waitpid(pids[i], &status, 0);  // Esperar a que el proceso termine, no nos hace falta ninguna flag como antes porque vamos a estar aquí hasta que termine
-                return 0;
-            }
-        }
+    // Compobar si el proceso está activo
+    if (waitpid(pid, &status, WNOHANG) == 0) {  // WNOHANG testea si el hijo pid[i] ha terminado, si no ha terminado, devuelve 0
+        // Esperar a que el proceso termine
+        waitpid(pid, &status, 0);
+        // Eliminar el proceso del array de procesos
+        pids = (int *)realloc(pids, sizeof(int) * (num_procesos - 1));
+        nombre_procesos = (char **)realloc(nombre_procesos, sizeof(char *) * (num_procesos - 1));
+        num_procesos--;
+    } else {
+        printf("fg: Error: no se ha encontrado el proceso %d\n", pid);
+        return 1;
     }
 
-    printf("No se ha encontrado el proceso %d\n", pid);
+    printf("No hay ningún proceso en segundo plano.\n");
     return 1;
 }
 
@@ -248,7 +245,8 @@ int chumask(int mask)
 // Implementación clear
 void clear()
 {
-    printf("\033[H\033[J");  // Secuencia de escape ANSI para limpiar la pantalla
+    //printf("\033[H\033[J");  // Secuencia de escape ANSI para limpiar la pantalla
+    system("clear");
 }
 
 // Implementación exit
@@ -272,7 +270,6 @@ void help()
     printf("cd [dir] - Cambia el directorio actual a dir. Sin especificar dir, se cambia al directorio HOME.\n");
     printf("jobs - Muestra los procesos en segundo plano.\n");
     printf("fg [pid] - Pone el proceso con el pid indicado en primer plano.\n");
-    printf("bg [pid] - Pone el proceso con el pid indicado en segundo plano.\n");
     printf("umask [mask] - Cambia la máscara de permisos de los archivos creados por la minishell.\n");
     printf("exit - Cierra la minishell.\n");
     printf("clear - Limpia la pantalla.\n");
