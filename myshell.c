@@ -15,7 +15,7 @@ char *path;
 char *home;
 
 // Variables globales
-int *pids;  // Pids de los procesos hijos (background)
+pid_t *pids;  // Pids de los procesos hijos (background)
 char **nombre_procesos; // Nombres de los procesos hijos (background)
 int num_procesos = 0; // Numero de procesos hijos (background)
 int umask_value;  // Valor del umask de la minishell
@@ -105,9 +105,7 @@ tline *leer_linea() {
     // Leer línea de entrada estándar
     fgets(buffer, 1024, stdin);
     // Hacer que no se rompa si se introduce una cadena vacía
-    if (buffer[0] == '\n') {
-        return NULL;
-    }
+    if (buffer[0] == '\n') return NULL;
     // Tokenizar línea
     line = tokenize(buffer);
     // Devolver línea tokenizada
@@ -146,40 +144,28 @@ int procesar(tline *linea)
     int background;
 
     // Comprobar si hay que ejecutar en background
-    if (linea->background) {
-        background = 1;
-    } else background = 0;
+    if (linea->background) background = 1;
+    else background = 0;
 
     // Comprobar si hay algo que redireccionar
-    if (linea->redirect_input != NULL) {
-        redireccion = 1;
-    } else if (linea->redirect_output != NULL) {
-        redireccion = 2;
-    } else if (linea->redirect_error != NULL) {
-        redireccion = 3;
-    } else redireccion = 0;
+    if (linea->redirect_input != NULL) redireccion = 1;
+    else if (linea->redirect_output != NULL) redireccion = 2;
+    else if (linea->redirect_error != NULL) redireccion = 3;
+    else redireccion = 0;
 
     // Comprobar si hay que ejecutar más de un mandato (pipe)
-    if (linea->ncommands > 1) {
-        mandatos = linea->ncommands;
-    } else mandatos = 1;
+    if (linea->ncommands > 1) mandatos = linea->ncommands;
+    else mandatos = 1;
 
     // Comprobar si el mandato es interno
-    if (strcmp(linea->commands[0].argv[0], "cd") == 0) {
-        cd(linea->commands[0].argv[1]);
-    } else if (strcmp(linea->commands[0].argv[0], "jobs") == 0) {
-        jobs();
-    } else if (strcmp(linea->commands[0].argv[0], "fg") == 0) {
-        fg(linea->commands[0].argv[1]);
-    } else if (strcmp(linea->commands[0].argv[0], "umask") == 0) {
-        chumask(linea->commands[0].argv[1]);
-    } else if (strcmp(linea->commands[0].argv[0], "exit") == 0) {
-        salir();
-    } else if (strcmp(linea->commands[0].argv[0], "clear") == 0) {
-        system("clear");
-    } else if(strcmp(linea->commands[0].argv[0], "help") == 0) {
-        help();
-    } else ejecutar_externo(linea, mandatos, redireccion, background); // Ejecutar mandato externo
+    if (strcmp(linea->commands[0].argv[0], "cd") == 0) cd(linea->commands[0].argv[1]);
+    else if (strcmp(linea->commands[0].argv[0], "jobs") == 0) jobs();
+    else if (strcmp(linea->commands[0].argv[0], "fg") == 0) fg(linea->commands[0].argv[1]);
+    else if (strcmp(linea->commands[0].argv[0], "umask") == 0) chumask(linea->commands[0].argv[1]);
+    else if (strcmp(linea->commands[0].argv[0], "exit") == 0) salir();
+    else if (strcmp(linea->commands[0].argv[0], "clear") == 0) system("clear");
+    else if(strcmp(linea->commands[0].argv[0], "help") == 0) help();
+    else ejecutar_externo(linea, mandatos, redireccion, background); // Ejecutar mandato externo
 
     return 0;
 
@@ -189,10 +175,9 @@ int procesar(tline *linea)
 int cd(char *dir)
 {
     if (dir == NULL) {
-        if (chdir(home) == -1) {
-            perror("cd");
-        }
-    } else if (chdir(dir) != 0) {
+        if (chdir(home) == -1) perror("cd");
+    }
+    else if (chdir(dir) != 0) {
         printf("cd: Error: no se ha podido cambiar al directorio %s\n", dir);
         return 1;
     }
@@ -207,9 +192,8 @@ void jobs()
     int status;
     for (i = 0; i < num_procesos; i++) {
         // Comprobar si el proceso está activo
-        if (waitpid(pids[i], &status, WNOHANG) == 0) {  // WNOHANG testea si el hijo pid[i] ha terminado, si no ha terminado, devuelve 0
-            printf("[%d]+ Running        %s\n", pids[i], nombre_procesos[i]);
-        }
+        // WNOHANG testea si el hijo pid[i] ha terminado, si no ha terminado, devuelve 0
+        if (waitpid(pids[i], &status, WNOHANG) == 0) printf("[%d]+ Running        %s\n", pids[i], nombre_procesos[i]);
     }
 }
 
@@ -294,18 +278,25 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 {
     int i = 0;
     int j = 0;
-    int pid;
-    int tub[2];
+    pid_t *pid;
+    int fd[mandatos][2];
     int in = 0;
     int out = 0;
     int err = 0;
     int status = 0;
     char *lineaenviada;
     lineaenviada = (char *)malloc(1024 * sizeof(char));
+    pid = (int *)malloc(mandatos * sizeof(int));
 
     // Comprobar si necesitamos un pipe
     if (mandatos > 1) {
-        pipe(tub);
+        for (i = 0; i < mandatos; i ++) {
+            if (pipe(fd[i]) != 0) {
+                printf("%s. Error al crear el/los pipes. %s", linea->commands[0].argv[0], stderror(errno));
+                return 1;
+            }
+        }
+        i = 0;
     }
 
     // Comprobar si hay que redireccionar la entrada o la salida
@@ -332,23 +323,24 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     // Ejecutar en foreground o background
     // Ejecución en background
     if (background) {
-        pid = fork();
-        if (pid < 0) {
+        pid[0] = fork();
+        if (pid[0] < 0) {
             printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
             return 1;
-        } else if (pid == 0) { // Proceso hijo
+        } else if (pid[0] == 0) { // Proceso hijo
             // Ejecutar el comando
             if (mandatos > 1) {
                 // Si hay más de un comando, redireccionar la salida del primer comando al pipe
-                close(tub[0]);  // Cerrar el extremo de lectura del pipe
-                dup2(tub[1], STDOUT_FILENO);  // Redireccionar la salida estándar al extremo de escritura del pipe
+                dup2(fd[i][1], STDOUT_FILENO);  // Redireccionar la salida estándar al extremo de escritura del pipe
+                close(fd[i][0]);  // Cerrar el extremo de lectura del pipe
+                close(fd[i][1]);  // Cerrar el extremo de escritura del pipe, dup2 ya ha creado otro descriptor de fichero que queda abierto y apunta a lo mismo, luego este se puede cerrar
             } else if (redireccion == 1) {
                 // Si hay que redireccionar la entrada estándar
                 dup2(in, STDIN_FILENO);
-            } else if (redireccion == 2) {
+            } else if (redireccion == 2 && mandatos == 1) {
                 // Si hay que redireccionar la salida
                 dup2(out, STDOUT_FILENO);
-            } else if (redireccion == 3) {
+            } else if (redireccion == 3 && mandatos == 1) {
                 // Si hay que redireccionar la salida de error
                 dup2(err, STDERR_FILENO);
             }
@@ -356,16 +348,36 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             // Ejecutar el comando
             execv(linea->commands[i].filename, linea->commands[i].argv);
 
+            if (mandatos > 1) {
+                for (i = 1; i < mandatos; i++) {
+                    if (i == mandatos) {
+
+                    }
+                    pid[i] = fork();
+                    if (pid[i] < 0) {
+                        printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
+                        return 1;
+                    }
+                    if (pid[i] == 0) {
+                        dup2(fd[0], STDIN_FILENO);
+                        close(fd[0]);
+                        close(fd[1]);
+                    }
+                }
+            }
+
             printf("%s: Error al ejecutar el comando. %s\n", linea->commands[i].argv[0], strerror(errno));
             exit(1);
         } else { // Proceso padre
             // Añadir el proceso a la lista de procesos
             pids = realloc(pids, (num_procesos + 1) * sizeof(int));  // Añadir espacio para el nuevo proceso
-            pids[num_procesos] = pid;  // Guardar el pid del proceso
+            pids[num_procesos] = pid[0];  // Guardar el pid del proceso
             nombre_procesos = realloc(nombre_procesos, (num_procesos + 1) * sizeof(char *));  // Añadir espacio para el nuevo proceso
-            for (j = 0; j < linea->commands[i].argc; j++) {  // Guardar el nombre completo del proceso
-                strcat(lineaenviada, linea->commands[i].argv[j]);
-                strcat(lineaenviada, " ");
+            for (i = 0; i < mandatos; i++) {
+                for (j = 0; j < linea->commands[i].argc; j++) {  // Guardar el nombre completo del proceso
+                    strcat(lineaenviada, linea->commands[i].argv[j]);
+                    strcat(lineaenviada, " ");
+                }
             }
             nombre_procesos[num_procesos] = (char*)malloc((strlen(lineaenviada) + 1) * sizeof(char));  // Añadir espacio para el nombre del proceso
             strcpy(nombre_procesos[num_procesos], lineaenviada);
@@ -376,21 +388,18 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     // Ejecución en foreground
     else {
         signal(SIGINT, manejador_sigint);
-        pid = fork();
-        if (pid < 0) {
+        pid[0] = fork();
+        if (pid[0] < 0) {
             printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
             return 1;
-        } else if (pid == 0) {
+        } else if (pid[0] == 0) {
             if (mandatos > 1) {
-                close(tub[0]); // Cerrar el extremo de lectura del pipe
-                dup2(tub[1], STDOUT_FILENO);
-            } else if (redireccion == 1) {
-                dup2(in, STDIN_FILENO);
-            } else if (redireccion == 2) {
-                dup2(out, STDOUT_FILENO);
-            } else if (redireccion == 3) {
-                dup2(err, STDERR_FILENO);
+                close(fd[0]); // Cerrar el extremo de lectura del pipe
+                dup2(fd[1], STDOUT_FILENO);
             }
+            if (redireccion == 1) dup2(in, STDIN_FILENO);
+            else if (redireccion == 2 && mandatos == 1) dup2(out, STDOUT_FILENO);
+            else if (redireccion == 3 && mandatos == 1) dup2(err, STDERR_FILENO);
 
             // Ejecutar el comando
             execv(linea->commands[i].filename, linea->commands[i].argv);
@@ -415,8 +424,16 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             }
     }
 
-    // Liberar la línea reservada
+    if (mandatos > 1) { // Cerrar los extremos para que el mandato sepa dónde termina la entrada estándar del pipe
+        for (i = 0; i < mandatos; i ++){
+            close(fd[i][0]);
+            close(fd[i][1]);
+        }
+    }
+
+    // Liberar la memoria reservada
     free(lineaenviada);
+    free(pid);
 
     return 0;
 }
