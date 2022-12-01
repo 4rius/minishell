@@ -231,7 +231,7 @@ int chumask(char *mask)
     if (mask != NULL) {
         mascara = atoi(mask);
         // Comprobar que es una máscara válida
-        if (mask < 0 || mask > 0777) {
+        if (mascara < 0 || mascara > 0777) {
             printf("La máscara debe estar entre 0 y 777\n");
             return 1;
         }
@@ -240,6 +240,8 @@ int chumask(char *mask)
         mascara = 0777 - mascara;
 
         umask_value = mascara;
+        
+        return 0;
     } else printf("Valor de la máscara: %d\n", umask_value);
 
     return 0;
@@ -278,6 +280,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 {
     int i = 0;
     int j = 0;
+    int k = 0;
     pid_t *pid;
     int fd[mandatos][2];
     int in = 0;
@@ -290,13 +293,12 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 
     // Comprobar si necesitamos un pipe
     if (mandatos > 1) {
-        for (i = 0; i < mandatos; i ++) {
-            if (pipe(fd[i]) != 0) {
-                printf("%s. Error al crear el/los pipes. %s", linea->commands[0].argv[0], stderror(errno));
+        for (k = 0; k < mandatos; k ++) {
+            if (pipe(fd[k]) != 0) {
+                printf("%s. Error al crear el/los pipes. %s", linea->commands[0].argv[0], strerror(errno));
                 return 1;
             }
         }
-        i = 0;
     }
 
     // Comprobar si hay que redireccionar la entrada o la salida
@@ -332,8 +334,11 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             if (mandatos > 1) {
                 // Si hay más de un comando, redireccionar la salida del primer comando al pipe
                 dup2(fd[i][1], STDOUT_FILENO);  // Redireccionar la salida estándar al extremo de escritura del pipe
-                close(fd[i][0]);  // Cerrar el extremo de lectura del pipe
-                close(fd[i][1]);  // Cerrar el extremo de escritura del pipe, dup2 ya ha creado otro descriptor de fichero que queda abierto y apunta a lo mismo, luego este se puede cerrar
+                // Cerrar los extremos de las tuberías, dup2 ya duplica el descriptor de fichero, luego podemos cerrar también el extremo de escritura, en este momento tendríamos dos descriptores de fichero iguales
+                for (k = 0; k < mandatos; k ++){
+                    close(fd[k][0]);
+                    close(fd[k][1]);
+                }
             } else if (redireccion == 1) {
                 // Si hay que redireccionar la entrada estándar
                 dup2(in, STDIN_FILENO);
@@ -351,7 +356,23 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             if (mandatos > 1) {
                 for (i = 1; i < mandatos; i++) {
                     if (i == mandatos) {
-
+                            pid[i] = fork();
+                            if (pid[i] < 0) {
+                            printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
+                            return 1;
+                        }
+                        if (pid[i] == 0) {
+                            dup2(fd[i - 1][0], STDIN_FILENO); // Leer la entrada de la tubería anterior
+                            if (redireccion == 1) dup2(in, STDIN_FILENO);
+                            else if (redireccion == 2) dup2(out, STDOUT_FILENO);
+                            else if (redireccion == 3) dup2(err, STDERR_FILENO);
+                            for (k = 0; k < mandatos; k ++){ // Cerrar las tuberías
+                                close(fd[k][0]);
+                                close(fd[k][1]);
+                            }
+                            execv(linea->commands[i].filename, linea->commands[i].argv);
+                        }
+                        return 0; // Termina la ejecución
                     }
                     pid[i] = fork();
                     if (pid[i] < 0) {
@@ -359,9 +380,13 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
                         return 1;
                     }
                     if (pid[i] == 0) {
-                        dup2(fd[0], STDIN_FILENO);
-                        close(fd[0]);
-                        close(fd[1]);
+                        dup2(fd[i - 1][0], STDIN_FILENO); // Leer la entrada de la tubería anterior
+                        dup2(fd[i][1], STDOUT_FILENO); // Escribir en su tubería
+                        for (k = 0; k < mandatos; k ++){ // Cerrar las tuberías
+                            close(fd[k][0]);
+                            close(fd[k][1]);
+                        }
+                        execv(linea->commands[i].filename, linea->commands[i].argv);
                     }
                 }
             }
@@ -394,8 +419,11 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
             return 1;
         } else if (pid[0] == 0) {
             if (mandatos > 1) {
-                close(fd[0]); // Cerrar el extremo de lectura del pipe
-                dup2(fd[1], STDOUT_FILENO);
+                dup2(fd[0][1], STDOUT_FILENO);
+                for (k = 0; k < mandatos; k ++){
+                    close(fd[k][0]);
+                    close(fd[k][1]);
+                }
             }
             if (redireccion == 1) dup2(in, STDIN_FILENO);
             else if (redireccion == 2 && mandatos == 1) dup2(out, STDOUT_FILENO);
@@ -403,6 +431,44 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 
             // Ejecutar el comando
             execv(linea->commands[i].filename, linea->commands[i].argv);
+
+            if (mandatos > 1) {
+                for (i = 1; i < mandatos; i++) {
+                    if (i == mandatos) {
+                            pid[i] = fork();
+                            if (pid[i] < 0) {
+                            printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
+                            return 1;
+                        }
+                        if (pid[i] == 0) {
+                            dup2(fd[i - 1][0], STDIN_FILENO); // Leer la entrada de la tubería anterior
+                            if (redireccion == 1) dup2(in, STDIN_FILENO);
+                            else if (redireccion == 2) dup2(out, STDOUT_FILENO);
+                            else if (redireccion == 3) dup2(err, STDERR_FILENO);
+                            for (k = 0; k < mandatos; k ++){ // Cerrar las tuberías
+                                close(fd[k][0]);
+                                close(fd[k][1]);
+                            }
+                            execv(linea->commands[i].filename, linea->commands[i].argv);
+                        }
+                        return 0; // Termina la ejecución
+                    }
+                    pid[i] = fork();
+                    if (pid[i] < 0) {
+                        printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
+                        return 1;
+                    }
+                    if (pid[i] == 0) {
+                        dup2(fd[i - 1][0], STDIN_FILENO); // Leer la entrada de la tubería anterior
+                        dup2(fd[i][1], STDOUT_FILENO); // Escribir en su tubería
+                        for (k = 0; k < mandatos; k ++){ // Cerrar las tuberías
+                            close(fd[k][0]);
+                            close(fd[k][1]);
+                        }
+                        execv(linea->commands[i].filename, linea->commands[i].argv);
+                    }
+                }
+            }
             
             if (strcmp(strerror(errno), "Bad address \0"))
                 printf("%s: No se encuentra el mandatao.\n", linea->commands[i].argv[0]);
@@ -425,9 +491,9 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     }
 
     if (mandatos > 1) { // Cerrar los extremos para que el mandato sepa dónde termina la entrada estándar del pipe
-        for (i = 0; i < mandatos; i ++){
-            close(fd[i][0]);
-            close(fd[i][1]);
+        for (k = 0; k < mandatos; k ++){
+            close(fd[k][0]);
+            close(fd[k][1]);
         }
     }
 
