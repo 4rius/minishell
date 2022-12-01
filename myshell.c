@@ -18,13 +18,13 @@ char *home;
 int *pids;  // Pids de los procesos hijos (background)
 char **nombre_procesos; // Nombres de los procesos hijos (background)
 int num_procesos = 0; // Numero de procesos hijos (background)
-int umask_value;
+int umask_value;  // Valor del umask de la minishell
 
 // Mandatos internos
 int cd(char *dir);
 void jobs();
 int fg(char *pid);
-int chumask(int mask);
+int chumask(char *mask);
 void help();
 void salir();
 
@@ -172,7 +172,7 @@ int procesar(tline *linea)
     } else if (strcmp(linea->commands[0].argv[0], "fg") == 0) {
         fg(linea->commands[0].argv[1]);
     } else if (strcmp(linea->commands[0].argv[0], "umask") == 0) {
-        chumask(atoi(linea->commands[0].argv[1]));
+        chumask(linea->commands[0].argv[1]);
     } else if (strcmp(linea->commands[0].argv[0], "exit") == 0) {
         salir();
     } else if (strcmp(linea->commands[0].argv[0], "clear") == 0) {
@@ -241,18 +241,23 @@ int fg(char *pid)
 }
 
 // Implementación umask
-int chumask(int mask)
+int chumask(char *mask)
 {
-    // Comprobar que es una máscara válida
-    if (mask < 0 || mask > 0777) {
-        printf("La máscara debe estar entre 0 y 777\n");
-        return 1;
-    }
+    int mascara;
+    if (mask != NULL) {
+        mascara = atoi(mask);
+        // Comprobar que es una máscara válida
+        if (mask < 0 || mask > 0777) {
+            printf("La máscara debe estar entre 0 y 777\n");
+            return 1;
+        }
 
-    // Invertir la máscara para que represente los permisos con los que creamos los archivos
-    mask = 0777 - mask;
+        // Invertir la máscara para que represente los permisos con los que creamos los archivos
+        mascara = 0777 - mascara;
 
-    umask_value = mask;
+        umask_value = mascara;
+    } else printf("Valor de la máscara: %d\n", umask_value);
+
     return 0;
 }
 
@@ -277,7 +282,7 @@ void help()
     printf("cd [dir] - Cambia el directorio actual a dir. Sin especificar dir, se cambia al directorio HOME.\n");
     printf("jobs - Muestra los procesos en segundo plano.\n");
     printf("fg [pid] - Pone el proceso con el pid indicado en primer plano, o el último proceso mandado a segundo plano si no se da un argumento.\n");
-    printf("umask [mask] - Cambia la máscara de permisos de los archivos creados por la minishell.\n");
+    printf("umask [mask] - Cambia la máscara de permisos de los archivos creados por la minishell, o imprimir la actual.\n");
     printf("exit - Cierra la minishell.\n");
     printf("clear - Limpia la pantalla.\n");
     printf("help - Muestra esta ayuda.\n");
@@ -307,17 +312,20 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     if (redireccion == 1) {
         in = open(linea->redirect_input, O_RDONLY);
         if (in == -1) {
-            printf("%s: Error. No se pudo abrir el archivo de entrada, %s", linea->redirect_input, strerror(errno));
+            printf("%s: Error. No se pudo abrir el archivo de entrada, %s", linea->commands[0].argv[0], strerror(errno));
+            return 1;
         }
     } else if (redireccion == 2) {
         out = creat(linea->redirect_output, umask_value);
         if (out == -1) {
-            printf("%s: Error. No se pudo crear el archivo de salida, %s", linea->redirect_output, strerror(errno));
+            printf("%s: Error. No se pudo crear el archivo de salida, %s", linea->commands[0].argv[0], strerror(errno));
+            return 1;
         }
     } else if (redireccion == 3) {
         err = creat(linea->redirect_error, umask_value);
         if (err == -1) {
-            printf("%s: Error. No se pudo crear el archivo de salida de error, %s", linea->redirect_error, strerror(errno));
+            printf("%s: Error. No se pudo crear el archivo de salida de error, %s", linea->commands[0].argv[0], strerror(errno));
+            return 1;
         }
     }
 
