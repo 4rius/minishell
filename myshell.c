@@ -17,6 +17,7 @@ char *home;
 // Variables globales
 pid_t *pids;  // Pids de los procesos hijos (background)
 char **nombre_procesos; // Nombres de los procesos hijos (background)
+pid_t pidfg; // Gaurdar el pid que se ejecuta en foreground, nos sirve para cuando queremos matar un proceso de segundo plano
 int num_procesos = 0; // Numero de procesos hijos (background)
 int umask_value;  // Valor del umask de la minishell
 
@@ -70,7 +71,7 @@ int inicializar() {
     nombre_procesos = (char **)malloc(sizeof(char *));
 
     // Inicializar el umask de la minishell
-    chumask(0000);
+    chumask("0000");
  
     return 0;
 }
@@ -87,9 +88,10 @@ void loop() {
     tline *line;
     
     while (1) {
-        prompt();
         // Ignorar CTRL + C
         signal(SIGINT, SIG_IGN);
+        prompt();
+        // Ignorar CTRL + C
         line = leer_linea();
         if (line != NULL) {
             // Comprobar si hay algun proceso hijo terminado, útil para jobs y fg
@@ -134,6 +136,7 @@ void comprobar_procesos_terminados() {
 void manejador_sigint()
 {
     // Salir solo del proceso en foreground, no de la minishell
+    if (waitpid(pidfg, NULL, WNOHANG) == 0) kill(pidfg, SIGTERM); // Solo si tenemos un pid que esté activo, de forma que cuando no tengamos ningún pid almacenado, no nos lance un error
     printf("\n");
 }
 
@@ -208,6 +211,8 @@ int fg(char *pid)
         for (i = 0; i < num_procesos; i++) { // Para sacar el nombre del proceso
             if (pids[i] == pidv)
                 if (waitpid(pidv, &status, WNOHANG) == 0) {  // Comprobar si el proceso sigue activo
+                    pidfg = pidv;
+                    signal(SIGINT, manejador_sigint);
                     printf("%s\n", nombre_procesos[i]);
                     waitpid(pidv, &status, 0);
                     return 0;
@@ -215,9 +220,13 @@ int fg(char *pid)
         }
     } else {
         pidv = pids[num_procesos - 1];
-        printf("%s\n", nombre_procesos[num_procesos - 1]);
-        waitpid(pidv, &status, 0);
-        return 0;
+        if (waitpid(pidv, &status, WNOHANG) == 0) { // Para evitar error si la lista está vacía
+            pidfg = pidv;
+            signal(SIGINT, manejador_sigint); // En caso de que se haga ctrl + c, se matará a este pid en concreto
+            printf("%s\n", nombre_procesos[num_procesos - 1]);
+            waitpid(pidv, &status, 0);
+            return 0;
+        }
     }
 
     printf("fg: No hay ningún proceso en segundo plano o no se ha podido ejecutar el pid proporcionado en primer plano.\n");
@@ -412,7 +421,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
     }
     // Ejecución en foreground
     else {
-        signal(SIGINT, manejador_sigint);
+        signal(SIGINT, manejador_sigint); // Que el hijo que se crea herede este manejador, para poder matarlo con ctrl + c
         pid[0] = fork();
         if (pid[0] < 0) {
             printf("%s: Error al crear el proceso hijo. %s\n", linea->commands[i].filename, strerror(errno));
@@ -476,6 +485,7 @@ int ejecutar_externo(tline *linea, int mandatos, int redireccion, int background
 
             exit(1);
         } else {
+            pidfg = pid[0];
 
             // Esperar a que termine el proceso hijo
             wait(&status);
